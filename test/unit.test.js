@@ -1,0 +1,98 @@
+'use strict';
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+
+require('./helpers');
+const { encryptJson, decryptJson, loadKey } = require('../src/crypto');
+const { mapScrapeResult, resolveStartDate, withTimeout } = require('../src/scraper');
+const { DEFAULT_START_DAYS_BACK } = require('../src/config');
+
+test('credentials encrypt and decrypt with AES-256-GCM', () => {
+  const credentials = { username: 'user', password: 'secret' };
+  const payload = encryptJson(credentials);
+  assert.match(payload, /^v1:[^:]+:[^:]+:[^:]+$/);
+  assert.ok(!payload.includes('secret'));
+  assert.deepEqual(decryptJson(payload), credentials);
+
+  // Two encryptions of the same value differ (fresh IV each time).
+  assert.notEqual(payload, encryptJson(credentials));
+});
+
+test('a tampered payload or a wrong key fails to decrypt', () => {
+  const payload = encryptJson({ password: 'secret' });
+  const parts = payload.split(':');
+  const flipped = Buffer.from(parts[3], 'base64');
+  flipped[0] ^= 0xff;
+  parts[3] = flipped.toString('base64');
+  assert.throws(() => decryptJson(parts.join(':')));
+  assert.throws(() => decryptJson(payload, Buffer.alloc(32, 7)));
+});
+
+test('the encryption key must be 32 bytes', () => {
+  assert.equal(loadKey('b'.repeat(64)).length, 32);
+  assert.equal(loadKey(Buffer.alloc(32, 3).toString('base64')).length, 32);
+  assert.throws(() => loadKey('too-short'), /32 bytes/);
+  assert.throws(() => loadKey(''), /not set/);
+});
+
+test('resolveStartDate falls back to 90 days back', () => {
+  const explicit = resolveStartDate('2026-01-15T00:00:00.000Z');
+  assert.equal(explicit.toISOString(), '2026-01-15T00:00:00.000Z');
+
+  for (const value of [null, undefined, '', 'not-a-date']) {
+    const days = (Date.now() - resolveStartDate(value).getTime()) / 86400000;
+    assert.ok(Math.abs(days - DEFAULT_START_DAYS_BACK) < 0.1, `${value} gave ${days} days`);
+  }
+
+  // A future date is clamped to now so the library never rejects it.
+  const future = resolveStartDate(new Date(Date.now() + 86400000).toISOString());
+  assert.ok(future.getTime() <= Date.now() + 1000);
+});
+
+test('mapScrapeResult sums balances and keeps per transaction currency', () => {
+  const mapped = mapScrapeResult({
+    provider: 'leumi',
+    accounts: [
+      { balance: 100, currency: 'ILS', txns: [] },
+      {
+        balance: 25.5,
+        txns: [
+          {
+            identifier: 'abc',
+            date: '2026-09-01T00:00:00.000Z',
+            processedDate: '2026-09-02T00:00:00.000Z',
+            description: 'Amazon',
+            chargedAmount: -40,
+            originalCurrency: 'USD',
+            status: 'completed',
+          },
+        ],
+      },
+    ],
+  });
+  assert.equal(mapped.balance, 125.5);
+  assert.equal(mapped.currency, 'ILS');
+  assert.equal(mapped.transactions[0].currency, 'USD');
+});
+
+test('mapScrapeResult handles a provider that reports no balance', () => {
+  const mapped = mapScrapeResult({ provider: 'max', accounts: [{ txns: [] }] });
+  assert.equal(mapped.balance, null);
+  assert.equal(mapped.currency, 'ILS');
+  assert.deepEqual(mapped.transactions, []);
+});
+
+test('withTimeout closes the browser and raises timeout', async () => {
+  let closed = false;
+  const scraper = {
+    __closeBrowser: async () => {
+      closed = true;
+    },
+  };
+  await assert.rejects(
+    withTimeout(scraper, () => new Promise(() => {}), 25),
+    (err) => err.code === 'timeout' && err.status === 504,
+  );
+  assert.equal(closed, true);
+});
