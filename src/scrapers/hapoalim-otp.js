@@ -212,10 +212,22 @@ class HapoalimOtpScraper extends HapoalimScraper {
     }
 
     const filled = await this.countFilled(frame, indexes);
-    logger.info('otp_typed', { event: `filled_${filled}_of_${indexes.length}` });
+    logger.info('otp_typed', {
+      event: `filled_${filled}_of_${indexes.length}`,
+      reason: `digits_${digits.length}`,
+    });
 
-    // A dialog that enables its button on the last digit needs a moment to.
-    await delay(POLL_INTERVAL_MS);
+    // A dialog of boxes usually verifies the moment the last digit lands, with
+    // no button involved. Pressing its button after that sends the same code a
+    // second time, and a code the bank has already spent is a code it refuses:
+    // the boxes come back empty and the dialog stays up, which is exactly what
+    // a wrong code looks like. So the dialog is given a few seconds to act on
+    // its own, and only a dialog that does nothing gets submitted.
+    if (!(await this.stillWaiting(frame, indexes))) {
+      logger.info('otp_submitted', { reason: 'dialog_submitted_itself' });
+      return this.waitForOtpVerdict(possibleResults, { frame, indexes });
+    }
+
     const submitted = await this.submitOtpForm(frame);
     if (submitted !== 'button') await this.page.keyboard.press('Enter');
     logger.info('otp_submitted', { reason: submitted });
@@ -232,9 +244,9 @@ class HapoalimOtpScraper extends HapoalimScraper {
     return this.waitForOtpVerdict(possibleResults, { frame, indexes });
   }
 
-  /** True when the boxes still hold the code a few seconds after submitting. */
+  /** True when the boxes still hold the code a few seconds on. */
   async stillWaiting(frame, indexes) {
-    const deadline = Date.now() + 5 * POLL_INTERVAL_MS;
+    const deadline = Date.now() + 8 * POLL_INTERVAL_MS;
     while (Date.now() < deadline) {
       if ((await this.countFilled(frame, indexes)) === 0) return false;
       await delay(POLL_INTERVAL_MS);
