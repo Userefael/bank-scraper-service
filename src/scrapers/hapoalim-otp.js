@@ -217,10 +217,29 @@ class HapoalimOtpScraper extends HapoalimScraper {
     // A dialog that enables its button on the last digit needs a moment to.
     await delay(POLL_INTERVAL_MS);
     const submitted = await this.submitOtpForm(frame);
-    if (!submitted) await this.page.keyboard.press('Enter');
-    logger.info('otp_submitted', { reason: submitted ? 'button' : 'enter_key' });
+    if (submitted !== 'button') await this.page.keyboard.press('Enter');
+    logger.info('otp_submitted', { reason: submitted });
 
-    return this.waitForOtpVerdict(possibleResults);
+    // Clicking a button that the dialog has not enabled yet raises nothing and
+    // changes nothing, and is indistinguishable from a code the bank refused.
+    // If the dialog is still sitting there with the code in it, submit it the
+    // other way before waiting out the verdict.
+    if (submitted === 'button' && (await this.stillWaiting(frame, indexes))) {
+      await this.page.keyboard.press('Enter');
+      logger.info('otp_submitted', { reason: 'enter_key_retry' });
+    }
+
+    return this.waitForOtpVerdict(possibleResults, { frame, indexes });
+  }
+
+  /** True when the boxes still hold the code a few seconds after submitting. */
+  async stillWaiting(frame, indexes) {
+    const deadline = Date.now() + 5 * POLL_INTERVAL_MS;
+    while (Date.now() < deadline) {
+      if ((await this.countFilled(frame, indexes)) === 0) return false;
+      await delay(POLL_INTERVAL_MS);
+    }
+    return true;
   }
 
   /** How many code boxes hold anything. Counts only: never the characters. */
@@ -255,9 +274,14 @@ class HapoalimOtpScraper extends HapoalimScraper {
       .catch(() => {});
   }
 
-  /** Clicks the dialog's own button, found by its label rather than its class. */
+  /**
+   * Clicks the dialog's own button, found by its label rather than its class.
+   * Reports what it found, because a disabled button swallows a click without
+   * raising anything, and the dialog it leaves behind looks exactly like one
+   * that refused the code.
+   */
   async submitOtpForm(frame) {
-    const tagged = await frame
+    const state = await frame
       .evaluate(
         (submitAttribute, textPatterns) => {
           const buttons = [...document.querySelectorAll('button, input[type="submit"], a[role="button"]')];
@@ -268,28 +292,30 @@ class HapoalimOtpScraper extends HapoalimScraper {
           for (const source of textPatterns) {
             const pattern = new RegExp(source, 'i');
             const match = labelled.find((entry) => pattern.test(entry.text));
-            if (match) {
-              match.element.setAttribute(submitAttribute, 'true');
-              return true;
+            if (!match) continue;
+            if (match.element.disabled || match.element.getAttribute('aria-disabled') === 'true') {
+              return 'button_disabled';
             }
+            match.element.setAttribute(submitAttribute, 'true');
+            return 'button';
           }
-          return false;
+          return 'no_button';
         },
         SUBMIT_ATTRIBUTE,
         SUBMIT_TEXT_PATTERNS.map((pattern) => pattern.source),
       )
-      .catch(() => false);
+      .catch(() => 'no_button');
 
-    if (!tagged) return false;
+    if (state !== 'button') return state;
     try {
       await clickButton(frame, `[${SUBMIT_ATTRIBUTE}="true"]`);
-      return true;
+      return 'button';
     } catch {
-      return false;
+      return 'click_failed';
     }
   }
 
-  async waitForOtpVerdict(possibleResults) {
+  async waitForOtpVerdict(possibleResults, typed = null) {
     const deadline = Date.now() + loginWaitMs();
     while (Date.now() < deadline) {
       const current = await getCurrentUrl(this.page, true);
@@ -297,6 +323,15 @@ class HapoalimOtpScraper extends HapoalimScraper {
       if (urlMatches(current, possibleResults.INVALID_PASSWORD)) return LOGIN_OUTCOMES.INVALID_PASSWORD;
       await delay(POLL_INTERVAL_MS);
     }
+
+    // A dialog that is still up with the code still in its boxes was never
+    // submitted; one the bank emptied and put back is one it refused. The two
+    // need different fixes, so which it was goes in the log.
+    if (typed) {
+      const left = await this.countFilled(typed.frame, typed.indexes);
+      logger.warn('otp_boxes_after_verdict', { event: `filled_${left}_of_${typed.indexes.length}` });
+    }
+
     // The dialog still being up means the bank did not accept what we typed.
     return (await this.locateOtpTarget()) ? LOGIN_OUTCOMES.INVALID_PASSWORD : LOGIN_OUTCOMES.UNKNOWN;
   }
