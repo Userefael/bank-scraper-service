@@ -162,6 +162,37 @@ test('the code boxes are recognised the way Bank Hapoalim draws them', () => {
   const five = chooseOtpFields([box(0), box(1), box(2), box(3), box(4)], { textMatches: true });
   assert.deepEqual(five, { mode: 'multi', indexes: [0, 1, 2, 3, 4] });
 
+  // The real dialog: five anonymous text inputs with no maxlength, sitting on
+  // the login page behind it. This is what the bank actually renders.
+  const hapoalim = chooseOtpFields(
+    [
+      box(0, { id: 'userCode', type: 'text', maxLength: null }),
+      box(1, { id: 'password', type: 'text', maxLength: null }),
+      box(2, { type: 'text', maxLength: null }),
+      box(3, { type: 'text', maxLength: null }),
+      box(4, { type: 'text', maxLength: null }),
+      box(5, { type: 'text', maxLength: null }),
+      box(6, { type: 'text', maxLength: null }),
+    ],
+    { textMatches: true },
+  );
+  assert.deepEqual(hapoalim, { mode: 'multi', indexes: [2, 3, 4, 5, 6] });
+
+  // A row of anonymous inputs on a page that says nothing about a code is a
+  // form, not a challenge.
+  assert.equal(
+    chooseOtpFields(
+      [
+        box(2, { type: 'text', maxLength: null }),
+        box(3, { type: 'text', maxLength: null }),
+        box(4, { type: 'text', maxLength: null }),
+        box(5, { type: 'text', maxLength: null }),
+      ],
+      { textMatches: false },
+    ),
+    null,
+  );
+
   // The login page itself must never look like a code challenge.
   const loginPage = chooseOtpFields(
     [

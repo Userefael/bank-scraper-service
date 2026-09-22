@@ -17,9 +17,20 @@ const LOGIN_OUTCOMES = {
 
 const LOGIN_FIELD_IDS = ['userCode', 'password'];
 
-/** The bank's own wording on the code dialog, which is what identifies it. */
-const OTP_TEXT_PATTERN = /קוד האימות|קוד אימות|כניסה חדשה ממחשב|הודעת SMS/;
-const SUBMIT_TEXT_PATTERN = /^(המשך|אישור|שלח|כניסה|continue|submit)$/i;
+/**
+ * The bank's own wording on the code dialog, which is what identifies it: the
+ * dialog is drawn over the login page and changes neither the URL nor the
+ * title, so its text is the only thing that says it is there. The offers to
+ * resend the code are part of it and are the most distinctive words on it.
+ */
+const OTP_TEXT_PATTERN = /קוד האימות|קוד אימות|כניסה חדשה ממחשב|הודעת SMS|שלחו קוד|קוד קולי/;
+
+/**
+ * The dialog's own button, in order of preference. The login page's own
+ * "כניסה" is still on the page behind the dialog and matches the same shape,
+ * so it is the last thing tried rather than the first thing found.
+ */
+const SUBMIT_TEXT_PATTERNS = [/^(המשך|אישור|continue|submit)$/i, /^שלח$/i, /^כניסה$/i];
 
 const FIELD_ATTRIBUTE = 'data-scraper-otp-field';
 const SUBMIT_ATTRIBUTE = 'data-scraper-otp-submit';
@@ -52,6 +63,16 @@ function chooseOtpFields(candidates, { textMatches = false } = {}) {
   const singleCharacter = usable.filter((candidate) => candidate.maxLength === 1);
   if (singleCharacter.length >= 4) {
     return { mode: 'multi', indexes: singleCharacter.map((candidate) => candidate.index) };
+  }
+
+  // Bank Hapoalim's own boxes carry no maxlength, id, name or numeric type:
+  // they are anonymous text inputs that its script drives. Nothing about a
+  // single one of them says "code", so what identifies them is that there is a
+  // row of them, on a page whose text reads like a code challenge, and that
+  // the login fields are not among them.
+  const anonymous = usable.filter((candidate) => !candidate.id && !candidate.name);
+  if (textMatches && anonymous.length >= 4) {
+    return { mode: 'multi', indexes: anonymous.map((candidate) => candidate.index) };
   }
 
   const named = usable.filter((candidate) =>
@@ -189,18 +210,24 @@ class HapoalimOtpScraper extends HapoalimScraper {
   async submitOtpForm(frame) {
     const tagged = await frame
       .evaluate(
-        (submitAttribute, textPattern) => {
-          const pattern = new RegExp(textPattern, 'i');
+        (submitAttribute, textPatterns) => {
           const buttons = [...document.querySelectorAll('button, input[type="submit"], a[role="button"]')];
-          const match = buttons.find((element) =>
-            pattern.test((element.innerText || element.value || '').trim()),
-          );
-          if (!match) return false;
-          match.setAttribute(submitAttribute, 'true');
-          return true;
+          const labelled = buttons.map((element) => ({
+            element,
+            text: (element.innerText || element.value || '').trim(),
+          }));
+          for (const source of textPatterns) {
+            const pattern = new RegExp(source, 'i');
+            const match = labelled.find((entry) => pattern.test(entry.text));
+            if (match) {
+              match.element.setAttribute(submitAttribute, 'true');
+              return true;
+            }
+          }
+          return false;
         },
         SUBMIT_ATTRIBUTE,
-        SUBMIT_TEXT_PATTERN.source,
+        SUBMIT_TEXT_PATTERNS.map((pattern) => pattern.source),
       )
       .catch(() => false);
 
