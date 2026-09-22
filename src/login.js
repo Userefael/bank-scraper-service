@@ -92,6 +92,8 @@ async function beginInteractiveLogin({ provider, credentials, connectionId, star
   if (outcome === LOGIN_OUTCOMES.OTP_REQUIRED) {
     return {
       status: 'otp_required',
+      outcome,
+      page: await scraper.describePage().catch(() => null),
       flow: {
         __closeBrowser: handles.__closeBrowser,
         close: () => finish(false),
@@ -111,13 +113,19 @@ async function beginInteractiveLogin({ provider, credentials, connectionId, star
     };
   }
 
+  const page = await scraper.describePage().catch(() => null);
   if (outcome === LOGIN_OUTCOMES.UNKNOWN) {
     // Only reachable when the bank showed something this service does not know.
-    logger.diagnostic('login_page_unrecognised', await scraper.describePage().catch(() => null));
+    logger.diagnostic('login_page_unrecognised', page);
   }
   await finish(false);
   logger.warn('login_outcome', { provider, event: outcome });
-  return { status: 'failed', errorCode: OUTCOME_ERROR_CODES[outcome] || ERROR_CODES.UNKNOWN };
+  return {
+    status: 'failed',
+    outcome,
+    page,
+    errorCode: OUTCOME_ERROR_CODES[outcome] || ERROR_CODES.UNKNOWN,
+  };
 }
 
 async function beginLibraryTwoFactorLogin({

@@ -206,6 +206,55 @@ function createApp() {
     }),
   );
 
+  /**
+   * Runs a login and reports the page it ended on, so a login that fails in
+   * production can be diagnosed without access to the logs. It saves nothing
+   * and returns no values from the page, only element names and labels, but it
+   * is a real login attempt against the bank: banks lock accounts that are
+   * hammered, so this is for one deliberate run, not for polling.
+   */
+  app.post(
+    '/debug/login',
+    handler('/debug/login', async (req, res) => {
+      const { provider, credentials } = req.body || {};
+      if (!config.isProvider(provider) || !isCredentialsObject(credentials)) {
+        return sendError(res, ERROR_CODES.INVALID_CREDENTIALS);
+      }
+
+      const connectionId = crypto.randomUUID();
+      const handles = {};
+      let outcome;
+      // Everything this route opened is closed before it answers, so nothing
+      // is left running or stored once the caller has its diagnosis.
+      try {
+        outcome = await withTimeout(
+          handles,
+          () =>
+            beginLogin({
+              provider,
+              credentials,
+              connectionId,
+              startDate: resolveStartDate(null, config.CONNECT_START_DAYS_BACK),
+              handles,
+            }),
+          config.connectTimeoutMs(),
+        );
+        if (outcome.status === 'otp_required') await outcome.flow.close();
+      } finally {
+        await closeQuietly(handles);
+        await browser.removeProfile(connectionId);
+      }
+
+      logger.info('debug_login', { route: '/debug/login', provider, event: outcome.status });
+      return res.json({
+        ok: true,
+        status: outcome.status,
+        outcome: outcome.outcome || null,
+        page: outcome.page || null,
+      });
+    }),
+  );
+
   app.post(
     '/sync',
     handler('/sync', async (req, res) => {

@@ -57,7 +57,14 @@ POST /connect     ← { provider, credentials }        → { ok: true, connectio
 POST /otp         ← { session_id, otp_code }         → { ok: true, connection_id }
 POST /sync        ← { connection_id, since }         → { ok: true, balance, currency, transactions: [] }
 POST /disconnect  ← { connection_id }                → { ok: true }
+
+POST /debug/login ← { provider, credentials }        → { ok: true, status, outcome, page }
 ```
+
+`/debug/login` מריץ התחברות אמיתית ומדווח על הדף שאליו היא הגיעה, בלי לשמור חיבור ובלי
+להחזיר ערכים מהדף — רק כתובת, כותרת, ושמות ותוויות של שדות וכפתורים. הוא נועד לריצה מכוונת
+אחת כשהתחברות נכשלת בפרודקשן ואין גישה נוחה ללוגים. **הוא מנסה להתחבר לבנק בפועל**, ובנקים
+נועלים חשבון שמפציצים אותו בניסיונות, אז לא להריץ אותו בלולאה.
 
 ספקים נתמכים: `leumi`, `hapoalim`, `discount`, `mizrahi`, `otsarHahayal`, `beinleumi`, `massad`,
 `yahav`, `isracard`, `amex`, `visaCal`, `max`, `behatsdaa`.

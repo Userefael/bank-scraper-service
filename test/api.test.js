@@ -515,3 +515,36 @@ test('a login that throws still closes its browser', async (t) => {
   assert.equal(launched.length, 1);
   assert.equal(launched[0].closed, true, 'the browser must not outlive the request');
 });
+
+test('/debug/login reports the page a failed login ended on', async (t) => {
+  const launched = fakeBrowser();
+  const pageShape = {
+    url: 'https://login.bankhapoalim.co.il/unknown',
+    title: 'הזדהות',
+    inputs: [{ id: 'verificationCode', name: 'code', type: 'tel', placeholder: 'קוד', label: null }],
+    buttons: ['המשך'],
+  };
+  setInteractiveScraperFactory(() => ({
+    getLoginOptions: () => ({ possibleResults: { SUCCESS: ['https://bank/home'] } }),
+    beginLogin: async () => 'unknown',
+    describePage: async () => pageShape,
+    finish: async () => {},
+  }));
+  const server = await startServer();
+  t.after(() => server.close());
+
+  const res = await call(server.url, '/debug/login', {
+    provider: 'hapoalim',
+    credentials: { userCode: 'user', password: 'secret' },
+  });
+
+  assert.equal(res.status, 200);
+  assert.equal(res.body.status, 'failed');
+  assert.equal(res.body.outcome, 'unknown');
+  assert.deepEqual(res.body.page, pageShape);
+  assert.equal(launched[0].closed, true);
+
+  // Diagnosing must not leave the profile it opened behind.
+  const fs = require('node:fs');
+  assert.equal(fs.existsSync(launched[0].profileDir), false);
+});
