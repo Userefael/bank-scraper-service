@@ -69,6 +69,17 @@ function isCredentialsObject(value) {
   );
 }
 
+/**
+ * Why a login the library reported as unsuccessful failed, for the log. The
+ * library's `errorType` is a short token and its `errorMessage` is its own
+ * wording, neither of which carries anything the customer typed; the logger
+ * masks digit runs in it anyway.
+ */
+function scraperFailureReason(result) {
+  if (!result) return 'no result';
+  return [result.errorType, result.errorMessage].filter(Boolean).join(': ') || 'no error type';
+}
+
 /** Keeps only the credential fields the library accepts for a stored login. */
 function credentialsForStorage(credentials, longTermToken) {
   const stored = { ...credentials, otpLongTermToken: longTermToken };
@@ -133,7 +144,12 @@ function createApp() {
 
       if (outcome.status === 'failed') {
         await browser.removeProfile(connectionId);
-        logger.warn('connect_failed', { route: '/connect', provider, error_code: outcome.errorCode });
+        logger.warn('connect_failed', {
+          route: '/connect',
+          provider,
+          error_code: outcome.errorCode,
+          reason: outcome.outcome || 'login failed',
+        });
         return sendError(res, outcome.errorCode);
       }
 
@@ -141,7 +157,12 @@ function createApp() {
       if (!result || result.success !== true) {
         await browser.removeProfile(connectionId);
         const code = errorCodeFromScraperResult(result);
-        logger.warn('connect_failed', { route: '/connect', provider, error_code: code });
+        logger.warn('connect_failed', {
+          route: '/connect',
+          provider,
+          error_code: code,
+          reason: scraperFailureReason(result),
+        });
         return sendError(res, code);
       }
 
@@ -199,7 +220,12 @@ function createApp() {
       if (outcome.status === 'failed' || !result || result.success !== true) {
         await browser.removeProfile(connectionId);
         const code = outcome.errorCode || errorCodeFromScraperResult(result);
-        logger.warn('otp_login_failed', { route: '/otp', provider, error_code: code });
+        logger.warn('otp_login_failed', {
+          route: '/otp',
+          provider,
+          error_code: code,
+          reason: outcome.outcome || scraperFailureReason(result),
+        });
         return sendError(res, code);
       }
 
