@@ -141,3 +141,51 @@ test('logged reasons keep the diagnosis and drop the digits', () => {
   assert.equal(errorCodeFromException(new Error('waiting for selector timed out')), ERROR_CODES.TIMEOUT);
   assert.equal(errorCodeFromException(new Error('something else entirely')), ERROR_CODES.UNKNOWN);
 });
+
+test('the code boxes are recognised the way Bank Hapoalim draws them', () => {
+  const { chooseOtpFields } = require('../src/scrapers/hapoalim-otp');
+
+  const box = (index, extra = {}) => ({
+    index,
+    id: '',
+    name: '',
+    type: 'tel',
+    placeholder: '',
+    label: '',
+    maxLength: 1,
+    disabled: false,
+    visible: true,
+    ...extra,
+  });
+
+  // Five single character boxes, one per digit, is the real dialog.
+  const five = chooseOtpFields([box(0), box(1), box(2), box(3), box(4)], { textMatches: true });
+  assert.deepEqual(five, { mode: 'multi', indexes: [0, 1, 2, 3, 4] });
+
+  // The login page itself must never look like a code challenge.
+  const loginPage = chooseOtpFields(
+    [
+      box(0, { id: 'userCode', maxLength: null, type: 'text' }),
+      box(1, { id: 'password', maxLength: null, type: 'password' }),
+    ],
+    { textMatches: false },
+  );
+  assert.equal(loginPage, null);
+
+  // A single named field still works, whatever the page says.
+  assert.deepEqual(
+    chooseOtpFields([box(0, { id: 'otpCode', maxLength: 6 })], { textMatches: false }),
+    { mode: 'single', indexes: [0] },
+  );
+
+  // A lone numeric field counts only when the page reads like a challenge.
+  const bare = [box(0, { maxLength: 6 })];
+  assert.equal(chooseOtpFields(bare, { textMatches: false }), null);
+  assert.deepEqual(chooseOtpFields(bare, { textMatches: true }), { mode: 'single', indexes: [0] });
+
+  // Hidden or disabled boxes are not entry points.
+  assert.equal(
+    chooseOtpFields([box(0, { visible: false }), box(1, { disabled: true })], { textMatches: true }),
+    null,
+  );
+});
