@@ -47,6 +47,19 @@ const DEFAULT_START_DAYS_BACK = 90;
 const CONNECT_START_DAYS_BACK = 1;
 const NAVIGATION_TIMEOUT_MS = 60 * 1000;
 
+/**
+ * Providers whose login this service drives itself so it can stop at the bank's
+ * SMS code page and resume from /otp. The library's own scrapers have no
+ * injection point for a code (only oneZero does), so a provider listed here
+ * must have a flow implemented under src/scrapers.
+ */
+const INTERACTIVE_OTP_PROVIDERS = ['hapoalim'];
+
+/** How long a login may run before the code page is expected to have appeared. */
+function loginWaitMs() {
+  return msFromEnv('LOGIN_WAIT_MS', 45 * 1000);
+}
+
 const CHROMIUM_ARGS = ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'];
 
 function dataDir() {
@@ -74,6 +87,8 @@ module.exports = {
   MAX_OTP_ATTEMPTS,
   DEFAULT_START_DAYS_BACK,
   NAVIGATION_TIMEOUT_MS,
+  INTERACTIVE_OTP_PROVIDERS,
+  loginWaitMs,
   CHROMIUM_ARGS,
   dataDir,
   connectionsFile,

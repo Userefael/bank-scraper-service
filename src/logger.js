@@ -33,7 +33,18 @@ function emit(level, message, fields) {
   process.stdout.write(`${JSON.stringify(line)}\n`);
 }
 
+/**
+ * Page-shape diagnostics for a login that landed somewhere unexpected. Off
+ * unless DEBUG_LOGIN_PAGE is set, and its payload is built from element names,
+ * types and labels only: field values never reach it.
+ */
+function diagnostic(message, payload) {
+  if (process.env.DEBUG_LOGIN_PAGE !== 'true') return;
+  process.stdout.write(`${JSON.stringify({ level: 'debug', msg: message, page: payload })}\n`);
+}
+
 module.exports = {
+  diagnostic,
   info: (message, fields) => emit('info', message, fields),
   warn: (message, fields) => emit('warn', message, fields),
   error: (message, fields) => emit('error', message, fields),

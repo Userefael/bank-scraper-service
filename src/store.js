@@ -47,8 +47,7 @@ function mutate(fn) {
 }
 
 /** Stores a new connection and returns its record (without credentials). */
-async function saveConnection({ provider, credentials }) {
-  const connectionId = crypto.randomUUID();
+async function saveConnection({ connectionId = crypto.randomUUID(), provider, credentials }) {
   const record = {
     connection_id: connectionId,
     provider,

@@ -20,13 +20,14 @@ function schedule(session) {
 }
 
 /** Creates a session and returns its id. */
-function create({ provider, credentials, scraper }) {
+function create({ provider, credentials, flow, connectionId }) {
   const sessionId = crypto.randomUUID();
   const session = {
     session_id: sessionId,
     provider,
     credentials,
-    scraper,
+    connection_id: connectionId,
+    flow,
     otp_failures: 0,
     expires_at: Date.now() + SESSION_TTL_MS,
     timer: null,
@@ -55,8 +56,8 @@ function remove(sessionId) {
   sessions.delete(sessionId);
   if (session.timer) clearTimeout(session.timer);
   session.credentials = null;
-  const closeBrowser = session.scraper && session.scraper.__closeBrowser;
-  session.scraper = null;
+  const closeBrowser = session.flow && session.flow.__closeBrowser;
+  session.flow = null;
   if (typeof closeBrowser === 'function') {
     Promise.resolve()
       .then(() => closeBrowser())

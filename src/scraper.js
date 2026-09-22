@@ -24,21 +24,27 @@ function setScraperFactory(factory) {
  * Builds a scraper for a provider. The browser instance is captured through
  * the `prepareBrowser` hook so a scrape that overruns can be torn down.
  */
-function buildScraper({ provider, startDate }) {
-  const state = { browser: null };
+function buildScraper({ provider, startDate, browser = null }) {
+  const state = { browser };
   const options = {
     companyId: provider,
     startDate,
     combineInstallments: false,
-    args: CHROMIUM_ARGS,
     timeout: NAVIGATION_TIMEOUT_MS,
     defaultTimeout: NAVIGATION_TIMEOUT_MS,
-    prepareBrowser: async (browser) => {
-      state.browser = browser;
-    },
   };
-  if (process.env.PUPPETEER_EXECUTABLE_PATH) {
-    options.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
+
+  if (browser) {
+    // Launched by this service so the connection keeps its own profile.
+    options.browser = browser;
+  } else {
+    options.args = CHROMIUM_ARGS;
+    options.prepareBrowser = async (launched) => {
+      state.browser = launched;
+    };
+    if (process.env.PUPPETEER_EXECUTABLE_PATH) {
+      options.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
+    }
   }
 
   const scraper = scraperFactory(options);

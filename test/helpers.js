@@ -11,7 +11,31 @@ process.env.DATA_DIR =
 
 const { createApp } = require('../src/app');
 const { setScraperFactory } = require('../src/scraper');
+const { setInteractiveScraperFactory } = require('../src/login');
+const { setLauncher } = require('../src/browser');
 const { BaseScraper } = require('israeli-bank-scrapers/lib/scrapers/base-scraper');
+
+/**
+ * Stands in for Chromium. Every login path launches a browser for the
+ * connection's profile, so without this the suite would need a real one.
+ */
+function fakeBrowser() {
+  const launched = [];
+  setLauncher(async ({ profileDir }) => {
+    const instance = {
+      profileDir,
+      closed: false,
+      process: () => (instance.closed ? null : {}),
+      close: async () => {
+        instance.closed = true;
+      },
+      newPage: async () => ({}),
+    };
+    launched.push(instance);
+    return instance;
+  });
+  return launched;
+}
 
 const API_KEY = process.env.SCRAPER_API_KEY;
 
@@ -61,4 +85,12 @@ async function call(url, route, body, { apiKey = API_KEY, raw } = {}) {
   return { status: res.status, body: await res.json() };
 }
 
-module.exports = { API_KEY, fakeFactory, setScraperFactory, startServer, call };
+module.exports = {
+  API_KEY,
+  fakeBrowser,
+  fakeFactory,
+  setInteractiveScraperFactory,
+  setScraperFactory,
+  startServer,
+  call,
+};

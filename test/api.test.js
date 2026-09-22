@@ -3,10 +3,21 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { call, fakeFactory, setScraperFactory, startServer } = require('./helpers');
+const {
+  call,
+  fakeBrowser,
+  fakeFactory,
+  setInteractiveScraperFactory,
+  setScraperFactory,
+  startServer,
+} = require('./helpers');
 const { ALL_ERROR_CODES } = require('../src/errors');
 const { PROVIDERS } = require('../src/config');
 const sessions = require('../src/sessions');
+
+test.beforeEach(() => {
+  fakeBrowser();
+});
 
 const ACCOUNTS = [
   {
@@ -350,4 +361,132 @@ test('a second sync of the same connection gets 409', async (t) => {
   // The lock is released, so a later sync succeeds.
   const third = await call(server.url, '/sync', { connection_id: connectionId });
   assert.equal(third.status, 200);
+});
+
+/** Stands in for the Bank Hapoalim flow this service drives itself. */
+function fakeInteractiveScraper({ outcome, codes = ['1234'], accounts = ACCOUNTS }) {
+  const state = { finished: null, attempts: 0 };
+  setInteractiveScraperFactory(() => ({
+    getLoginOptions: () => ({ possibleResults: { SUCCESS: ['https://bank/home'] } }),
+    beginLogin: async () => outcome,
+    completeOtp: async (code) => {
+      state.attempts += 1;
+      return codes.includes(code) ? 'success' : 'invalid_password';
+    },
+    fetchAfterLogin: async () => ({ success: true, accounts }),
+    finish: async (success) => {
+      state.finished = success;
+    },
+    describePage: async () => ({ url: 'https://bank/unknown', title: '', inputs: [], buttons: [] }),
+  }));
+  return state;
+}
+
+test('hapoalim stops at the code page and resumes from /otp', async (t) => {
+  const state = fakeInteractiveScraper({ outcome: 'otp_required' });
+  const server = await startServer();
+  t.after(() => {
+    sessions.clear();
+    return server.close();
+  });
+
+  const started = await call(server.url, '/connect', {
+    provider: 'hapoalim',
+    credentials: { userCode: 'user', password: 'secret' },
+  });
+  assert.equal(started.status, 200);
+  assert.deepEqual(Object.keys(started.body).sort(), ['ok', 'requires_otp', 'session_id']);
+  assert.equal(started.body.requires_otp, true);
+
+  // A wrong code keeps the session open for another try.
+  const wrong = await call(server.url, '/otp', {
+    session_id: started.body.session_id,
+    otp_code: '0000',
+  });
+  assert.equal(wrong.status, 400);
+  assert.equal(wrong.body.error_code, 'invalid_credentials');
+  assert.equal(sessions.size(), 1);
+
+  const done = await call(server.url, '/otp', {
+    session_id: started.body.session_id,
+    otp_code: '1234',
+  });
+  assert.equal(done.status, 200);
+  assert.match(done.body.connection_id, /^[0-9a-f-]{36}$/);
+  assert.equal(state.finished, true);
+  assert.equal(sessions.size(), 0);
+
+  // The connection is usable afterwards, with no second code.
+  setScraperFactory(fakeFactory(() => ({ scrape: async () => ({ success: true, accounts: ACCOUNTS }) })));
+  const synced = await call(server.url, '/sync', { connection_id: done.body.connection_id });
+  assert.equal(synced.status, 200);
+  assert.equal(synced.body.transactions.length, 3);
+});
+
+test('three wrong codes end the hapoalim session', async (t) => {
+  fakeInteractiveScraper({ outcome: 'otp_required' });
+  const server = await startServer();
+  t.after(() => {
+    sessions.clear();
+    return server.close();
+  });
+
+  const started = await call(server.url, '/connect', {
+    provider: 'hapoalim',
+    credentials: { userCode: 'user', password: 'secret' },
+  });
+  const sessionId = started.body.session_id;
+
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    const res = await call(server.url, '/otp', { session_id: sessionId, otp_code: '0000' });
+    assert.equal(res.body.error_code, 'invalid_credentials', `attempt ${attempt}`);
+  }
+  assert.equal(sessions.size(), 0);
+
+  const afterwards = await call(server.url, '/otp', { session_id: sessionId, otp_code: '1234' });
+  assert.equal(afterwards.body.error_code, 'unknown');
+});
+
+test('a hapoalim login that needs no code connects straight away', async (t) => {
+  fakeInteractiveScraper({ outcome: 'success' });
+  const server = await startServer();
+  t.after(() => server.close());
+
+  const res = await call(server.url, '/connect', {
+    provider: 'hapoalim',
+    credentials: { userCode: 'user', password: 'secret' },
+  });
+  assert.equal(res.status, 200);
+  assert.match(res.body.connection_id, /^[0-9a-f-]{36}$/);
+});
+
+test('a rejected hapoalim login maps to invalid_credentials', async (t) => {
+  fakeInteractiveScraper({ outcome: 'invalid_password' });
+  const server = await startServer();
+  t.after(() => server.close());
+
+  const res = await call(server.url, '/connect', {
+    provider: 'hapoalim',
+    credentials: { userCode: 'user', password: 'wrong' },
+  });
+  assert.equal(res.status, 400);
+  assert.equal(res.body.error_code, 'invalid_credentials');
+});
+
+test('the browser profile lives and dies with the connection', async (t) => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  setScraperFactory(fakeFactory(() => ({ scrape: async () => ({ success: true, accounts: ACCOUNTS }) })));
+  const server = await startServer();
+  t.after(() => server.close());
+
+  const connected = await call(server.url, '/connect', {
+    provider: 'discount',
+    credentials: { id: '1', password: 'secret', num: '2' },
+  });
+  const profile = path.join(process.env.DATA_DIR, 'profiles', connected.body.connection_id);
+  assert.equal(fs.existsSync(profile), true, 'profile created for the connection');
+
+  await call(server.url, '/disconnect', { connection_id: connected.body.connection_id });
+  assert.equal(fs.existsSync(profile), false, 'profile removed with the connection');
 });
