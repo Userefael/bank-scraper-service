@@ -49,11 +49,17 @@ const NAVIGATION_TIMEOUT_MS = 60 * 1000;
 
 /**
  * Providers whose login this service drives itself so it can stop at the bank's
- * SMS code page and resume from /otp. The library's own scrapers have no
- * injection point for a code (only oneZero does), so a provider listed here
- * must have a flow implemented under src/scrapers.
+ * SMS code page and resume from /otp, as a comma separated environment value.
+ * Empty by default: every provider then logs in through the library's own
+ * scraper. Setting it to `hapoalim` turns on the flow in
+ * src/scrapers/hapoalim-otp.js, which is the only one implemented.
  */
-const INTERACTIVE_OTP_PROVIDERS = ['hapoalim'];
+function interactiveOtpProviders() {
+  return (process.env.INTERACTIVE_OTP_PROVIDERS || '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
 
 /** How long a login may run before the code page is expected to have appeared. */
 function loginWaitMs() {
@@ -87,7 +93,7 @@ module.exports = {
   MAX_OTP_ATTEMPTS,
   DEFAULT_START_DAYS_BACK,
   NAVIGATION_TIMEOUT_MS,
-  INTERACTIVE_OTP_PROVIDERS,
+  interactiveOtpProviders,
   loginWaitMs,
   CHROMIUM_ARGS,
   dataDir,

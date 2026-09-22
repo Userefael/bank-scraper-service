@@ -34,7 +34,7 @@ const OUTCOME_ERROR_CODES = {
 };
 
 function isInteractive(provider) {
-  return config.INTERACTIVE_OTP_PROVIDERS.includes(provider);
+  return config.interactiveOtpProviders().includes(provider);
 }
 
 /** Records the browser on `handles` so a timeout can still close it. */

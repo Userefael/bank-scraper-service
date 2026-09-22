@@ -17,6 +17,7 @@ const sessions = require('../src/sessions');
 
 test.beforeEach(() => {
   fakeBrowser();
+  delete process.env.INTERACTIVE_OTP_PROVIDERS;
 });
 
 const ACCOUNTS = [
@@ -366,6 +367,8 @@ test('a second sync of the same connection gets 409', async (t) => {
 /** Stands in for the Bank Hapoalim flow this service drives itself. */
 function fakeInteractiveScraper({ outcome, codes = ['1234'], accounts = ACCOUNTS }) {
   const state = { finished: null, attempts: 0 };
+  // The self-driven login is opt in, so a test that wants it asks for it.
+  process.env.INTERACTIVE_OTP_PROVIDERS = 'hapoalim';
   setInteractiveScraperFactory(() => ({
     getLoginOptions: () => ({ possibleResults: { SUCCESS: ['https://bank/home'] } }),
     beginLogin: async () => outcome,
@@ -493,6 +496,7 @@ test('the browser profile lives and dies with the connection', async (t) => {
 
 test('a login that throws still closes its browser', async (t) => {
   const launched = fakeBrowser();
+  process.env.INTERACTIVE_OTP_PROVIDERS = 'hapoalim';
   setInteractiveScraperFactory(() => ({
     getLoginOptions: () => ({ possibleResults: { SUCCESS: ['https://bank/home'] } }),
     beginLogin: async () => {
@@ -524,6 +528,7 @@ test('/debug/login reports the page a failed login ended on', async (t) => {
     inputs: [{ id: 'verificationCode', name: 'code', type: 'tel', placeholder: 'קוד', label: null }],
     buttons: ['המשך'],
   };
+  process.env.INTERACTIVE_OTP_PROVIDERS = 'hapoalim';
   setInteractiveScraperFactory(() => ({
     getLoginOptions: () => ({ possibleResults: { SUCCESS: ['https://bank/home'] } }),
     beginLogin: async () => 'unknown',
@@ -547,4 +552,29 @@ test('/debug/login reports the page a failed login ended on', async (t) => {
   // Diagnosing must not leave the profile it opened behind.
   const fs = require('node:fs');
   assert.equal(fs.existsSync(launched[0].profileDir), false);
+});
+
+test('hapoalim goes through the library scraper unless the flow is asked for', async (t) => {
+  const seen = [];
+  // No INTERACTIVE_OTP_PROVIDERS: beforeEach cleared it.
+  setScraperFactory(
+    fakeFactory((options) => {
+      seen.push(options.companyId);
+      return { scrape: async () => ({ success: true, accounts: ACCOUNTS }) };
+    }),
+  );
+  setInteractiveScraperFactory(() => {
+    throw new Error('the self-driven login must not run when it is not asked for');
+  });
+  const server = await startServer();
+  t.after(() => server.close());
+
+  const res = await call(server.url, '/connect', {
+    provider: 'hapoalim',
+    credentials: { userCode: 'user', password: 'secret' },
+  });
+
+  assert.equal(res.status, 200);
+  assert.match(res.body.connection_id, /^[0-9a-f-]{36}$/);
+  assert.deepEqual(seen, ['hapoalim']);
 });
