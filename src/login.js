@@ -48,6 +48,12 @@ function trackBrowser(handles, instance) {
   };
 }
 
+const PENDING = Symbol('login still running');
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function beginInteractiveLogin({ provider, credentials, connectionId, startDate, handles }) {
   const instance = await browser.launch({ profileDir: browser.profileDirFor(connectionId) });
   trackBrowser(handles, instance);
@@ -69,62 +75,79 @@ async function beginInteractiveLogin({ provider, credentials, connectionId, star
     }
   };
 
-  const collect = async () => {
-    const result = await scraper.fetchAfterLogin();
-    await finish(result && result.success !== false);
-    return result;
+  const failure = async (outcome) => {
+    const page = await scraper.describePage().catch(() => null);
+    if (outcome === LOGIN_OUTCOMES.UNKNOWN) {
+      // Only reachable when the bank showed something this service does not know.
+      logger.diagnostic('login_page_unrecognised', page);
+    }
+    await finish(false);
+    logger.warn('login_outcome', { provider, event: outcome });
+    return {
+      status: 'failed',
+      outcome,
+      page,
+      errorCode: OUTCOME_ERROR_CODES[outcome] || ERROR_CODES.UNKNOWN,
+    };
   };
 
-  let outcome;
-  try {
-    outcome = await scraper.beginLogin(credentials);
-  } catch (err) {
-    // Whatever the bank did, the browser is ours to close.
-    logger.diagnostic('login_page_unrecognised', await scraper.describePage().catch(() => null));
-    await finish(false);
-    throw err;
+  // A login that succeeded needs no data here: /connect only proves the
+  // credentials, and /sync is what fetches. Skipping the throwaway scrape is
+  // what lets /otp answer while the customer is still holding the code.
+  const connected = async () => {
+    await finish(true);
+    return { status: 'connected', result: { success: true, accounts: [] } };
+  };
+
+  const login = scraper.beginLogin(credentials);
+  login.catch(() => {});
+
+  const raced = await Promise.race([
+    login.then((outcome) => ({ outcome }), (error) => ({ error })),
+    delay(config.fastAnswerMs()).then(() => PENDING),
+  ]);
+
+  if (raced !== PENDING) {
+    if (raced.error) {
+      logger.diagnostic('login_page_unrecognised', await scraper.describePage().catch(() => null));
+      await finish(false);
+      throw raced.error;
+    }
+    if (raced.outcome === LOGIN_OUTCOMES.SUCCESS) return connected();
+    if (raced.outcome !== LOGIN_OUTCOMES.OTP_REQUIRED) return failure(raced.outcome);
   }
 
-  if (outcome === LOGIN_OUTCOMES.SUCCESS) {
-    return { status: 'connected', result: await collect() };
-  }
+  // Either the code dialog is already up, or the login is still on its way to
+  // one. Both answer now with a session: the bank has sent the code by then,
+  // or is about to, and the customer can be typing it while this finishes.
+  logger.info('otp_session_opened', {
+    provider,
+    event: raced === PENDING ? 'login_pending' : 'code_page_reached',
+  });
 
-  if (outcome === LOGIN_OUTCOMES.OTP_REQUIRED) {
-    return {
-      status: 'otp_required',
-      outcome,
-      page: await scraper.describePage().catch(() => null),
-      flow: {
-        __closeBrowser: handles.__closeBrowser,
-        close: () => finish(false),
-        complete: async (code) => {
-          const verdict = await scraper.completeOtp(code, possibleResults);
-          if (verdict === LOGIN_OUTCOMES.SUCCESS) {
-            return { status: 'connected', result: await collect() };
-          }
-          if (verdict === LOGIN_OUTCOMES.INVALID_PASSWORD) {
-            // The session stays open so the caller can try another code.
-            return { status: 'otp_rejected', errorCode: ERROR_CODES.INVALID_CREDENTIALS };
-          }
-          await finish(false);
-          return { status: 'failed', errorCode: ERROR_CODES.UNKNOWN };
-        },
-      },
-    };
-  }
-
-  const page = await scraper.describePage().catch(() => null);
-  if (outcome === LOGIN_OUTCOMES.UNKNOWN) {
-    // Only reachable when the bank showed something this service does not know.
-    logger.diagnostic('login_page_unrecognised', page);
-  }
-  await finish(false);
-  logger.warn('login_outcome', { provider, event: outcome });
   return {
-    status: 'failed',
-    outcome,
-    page,
-    errorCode: OUTCOME_ERROR_CODES[outcome] || ERROR_CODES.UNKNOWN,
+    status: 'otp_required',
+    outcome: LOGIN_OUTCOMES.OTP_REQUIRED,
+    page: raced === PENDING ? null : await scraper.describePage().catch(() => null),
+    flow: {
+      __closeBrowser: handles.__closeBrowser,
+      close: () => finish(false),
+      complete: async (code) => {
+        // The login may still be running when the code arrives.
+        const settled = await login.catch((error) => ({ error }));
+        if (settled && settled.error) throw settled.error;
+        if (settled === LOGIN_OUTCOMES.SUCCESS) return connected();
+        if (settled !== LOGIN_OUTCOMES.OTP_REQUIRED) return failure(settled);
+
+        const verdict = await scraper.completeOtp(code, possibleResults);
+        if (verdict === LOGIN_OUTCOMES.SUCCESS) return connected();
+        if (verdict === LOGIN_OUTCOMES.INVALID_PASSWORD) {
+          // The session stays open so the caller can try another code.
+          return { status: 'otp_rejected', errorCode: ERROR_CODES.INVALID_CREDENTIALS };
+        }
+        return failure(verdict);
+      },
+    },
   };
 }
 

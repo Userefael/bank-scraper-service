@@ -578,3 +578,104 @@ test('hapoalim goes through the library scraper unless the flow is asked for', a
   assert.match(res.body.connection_id, /^[0-9a-f-]{36}$/);
   assert.deepEqual(seen, ['hapoalim']);
 });
+
+/** Lets a test decide when the bank's login finishes, and with what. */
+function pendingInteractiveScraper() {
+  let settle;
+  const state = { finished: null, codes: [], started: new Promise((resolve) => { settle = resolve; }) };
+  process.env.INTERACTIVE_OTP_PROVIDERS = 'hapoalim';
+  process.env.FAST_ANSWER_MS = '100';
+  setInteractiveScraperFactory(() => ({
+    getLoginOptions: () => ({ possibleResults: { SUCCESS: ['https://bank/home'] } }),
+    beginLogin: () => state.started,
+    completeOtp: async (code) => {
+      state.codes.push(code);
+      return code === '11652' ? 'success' : 'invalid_password';
+    },
+    describePage: async () => null,
+    finish: async (success) => {
+      state.finished = success;
+    },
+  }));
+  return { state, resolveLogin: (outcome) => settle(outcome) };
+}
+
+test('/connect answers with a session while the login is still running', async (t) => {
+  const { state, resolveLogin } = pendingInteractiveScraper();
+  const server = await startServer();
+  t.after(() => {
+    delete process.env.FAST_ANSWER_MS;
+    sessions.clear();
+    return server.close();
+  });
+
+  const startedAt = Date.now();
+  const started = await call(server.url, '/connect', {
+    provider: 'hapoalim',
+    credentials: { userCode: 'user', password: 'secret' },
+  });
+  const elapsed = Date.now() - startedAt;
+
+  assert.equal(started.status, 200);
+  assert.equal(started.body.requires_otp, true);
+  assert.ok(elapsed < 3000, `answered in ${elapsed}ms, the caller must not wait for the bank`);
+
+  // The code arrives before the login has even reached the dialog.
+  const otp = call(server.url, '/otp', { session_id: started.body.session_id, otp_code: '11652' });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  resolveLogin('otp_required');
+
+  const done = await otp;
+  assert.equal(done.status, 200);
+  assert.match(done.body.connection_id, /^[0-9a-f-]{36}$/);
+  assert.deepEqual(state.codes, ['11652']);
+  assert.equal(state.finished, true);
+});
+
+test('a login that needed no code still connects when the code arrives', async (t) => {
+  const { state, resolveLogin } = pendingInteractiveScraper();
+  const server = await startServer();
+  t.after(() => {
+    delete process.env.FAST_ANSWER_MS;
+    sessions.clear();
+    return server.close();
+  });
+
+  const started = await call(server.url, '/connect', {
+    provider: 'hapoalim',
+    credentials: { userCode: 'user', password: 'secret' },
+  });
+  assert.equal(started.body.requires_otp, true);
+
+  const otp = call(server.url, '/otp', { session_id: started.body.session_id, otp_code: '11652' });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  // The bank recognised the device after all, so no code was ever needed.
+  resolveLogin('success');
+
+  const done = await otp;
+  assert.equal(done.status, 200);
+  assert.match(done.body.connection_id, /^[0-9a-f-]{36}$/);
+  assert.deepEqual(state.codes, [], 'no code should be typed into a login that already succeeded');
+});
+
+test('a pending login that fails reports the failure through /otp', async (t) => {
+  const { resolveLogin } = pendingInteractiveScraper();
+  const server = await startServer();
+  t.after(() => {
+    delete process.env.FAST_ANSWER_MS;
+    sessions.clear();
+    return server.close();
+  });
+
+  const started = await call(server.url, '/connect', {
+    provider: 'hapoalim',
+    credentials: { userCode: 'user', password: 'wrong' },
+  });
+  const otp = call(server.url, '/otp', { session_id: started.body.session_id, otp_code: '11652' });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  resolveLogin('invalid_password');
+
+  const done = await otp;
+  assert.equal(done.status, 400);
+  assert.equal(done.body.error_code, 'invalid_credentials');
+});

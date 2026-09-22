@@ -66,6 +66,16 @@ function loginWaitMs() {
   return msFromEnv('LOGIN_WAIT_MS', 45 * 1000);
 }
 
+/**
+ * How long /connect waits for a self-driven login before it answers with a
+ * session and lets the login finish in the background. It has to be short:
+ * the caller sits behind a gateway that gives up long before a bank login
+ * ends, and an answer that arrives after that is an answer nobody receives.
+ */
+function fastAnswerMs() {
+  return msFromEnv('FAST_ANSWER_MS', 8 * 1000);
+}
+
 const CHROMIUM_ARGS = ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'];
 
 function dataDir() {
@@ -95,6 +105,7 @@ module.exports = {
   NAVIGATION_TIMEOUT_MS,
   interactiveOtpProviders,
   loginWaitMs,
+  fastAnswerMs,
   CHROMIUM_ARGS,
   dataDir,
   connectionsFile,
