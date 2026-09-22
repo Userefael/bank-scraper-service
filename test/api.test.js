@@ -302,7 +302,7 @@ test('the OTP flow issues a session, counts failures and stores the connection',
   }
   const afterDiscard = await call(server.url, '/otp', { session_id: sessionId, otp_code: '1234' });
   assert.equal(afterDiscard.status, 400);
-  assert.equal(afterDiscard.body.error_code, 'unknown');
+  assert.equal(afterDiscard.body.error_code, 'timeout');
 
   // A fresh session with the right code yields a connection.
   const restarted = await call(server.url, '/connect', { provider: 'leumi', credentials });
@@ -321,7 +321,7 @@ test('the OTP flow issues a session, counts failures and stores the connection',
 
   const unknownSession = await call(server.url, '/otp', { session_id: 'no-such-session', otp_code: '1234' });
   assert.equal(unknownSession.status, 400);
-  assert.equal(unknownSession.body.error_code, 'unknown');
+  assert.equal(unknownSession.body.error_code, 'timeout');
 });
 
 test('a second sync of the same connection gets 409', async (t) => {
@@ -447,7 +447,7 @@ test('three wrong codes end the hapoalim session', async (t) => {
   assert.equal(sessions.size(), 0);
 
   const afterwards = await call(server.url, '/otp', { session_id: sessionId, otp_code: '1234' });
-  assert.equal(afterwards.body.error_code, 'unknown');
+  assert.equal(afterwards.body.error_code, 'timeout');
 });
 
 test('a hapoalim login that needs no code connects straight away', async (t) => {

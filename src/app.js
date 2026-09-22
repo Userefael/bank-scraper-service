@@ -161,9 +161,12 @@ function createApp() {
 
       const session = sessions.get(sessionId);
       if (!session) {
-        // An expired session is indistinguishable from one that never existed.
-        logger.warn('otp_session_missing', { route: '/otp', error_code: ERROR_CODES.UNKNOWN });
-        return sendError(res, ERROR_CODES.UNKNOWN, 400);
+        // Sessions hold a live browser, so they cannot outlive the process and
+        // there is no telling an expired one from one lost to a restart. Both
+        // mean the same thing to the caller: the code is stale, connect again.
+        // `timeout` says that; `unknown` would read as a rejected code.
+        logger.warn('otp_session_missing', { route: '/otp', error_code: ERROR_CODES.TIMEOUT });
+        return sendError(res, ERROR_CODES.TIMEOUT, 400);
       }
 
       const { provider, connection_id: connectionId } = session;

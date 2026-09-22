@@ -72,8 +72,15 @@ function loginWaitMs() {
  * the caller sits behind a gateway that gives up long before a bank login
  * ends, and an answer that arrives after that is an answer nobody receives.
  */
+/**
+ * How long `/connect` waits for a managed login to reach a definite outcome
+ * before it hands back a session and lets the login finish in the background.
+ * It has to be long enough for an ordinary login to finish inside it, or every
+ * slow login looks like a code challenge; it has to be short enough to answer
+ * before a gateway gives up on the request.
+ */
 function fastAnswerMs() {
-  return msFromEnv('FAST_ANSWER_MS', 8 * 1000);
+  return msFromEnv('FAST_ANSWER_MS', 45 * 1000);
 }
 
 const CHROMIUM_ARGS = ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'];

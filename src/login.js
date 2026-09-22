@@ -117,13 +117,24 @@ async function beginInteractiveLogin({ provider, credentials, connectionId, star
     if (raced.outcome !== LOGIN_OUTCOMES.OTP_REQUIRED) return failure(raced.outcome);
   }
 
-  // Either the code dialog is already up, or the login is still on its way to
-  // one. Both answer now with a session: the bank has sent the code by then,
-  // or is about to, and the customer can be typing it while this finishes.
+  // Either the code dialog is already up, or the login is taking longer than
+  // this service is willing to hold the request open. Both answer now with a
+  // session: the bank has sent the code by then, or is about to, and the
+  // customer can be typing it while this finishes.
   logger.info('otp_session_opened', {
     provider,
     event: raced === PENDING ? 'login_pending' : 'code_page_reached',
   });
+
+  // A session handed out on a pending login is a guess, and the guess is only
+  // settled later, inside the browser. Logging what it settled on is the only
+  // way to tell a real code challenge from a login that was merely slow.
+  if (raced === PENDING) {
+    login.then(
+      (outcome) => logger.info('login_settled', { provider, event: outcome }),
+      (error) => logger.warn('login_settled', { provider, event: 'error', reason: error && error.message }),
+    );
+  }
 
   return {
     status: 'otp_required',
