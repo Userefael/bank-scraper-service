@@ -98,7 +98,11 @@ function createApp() {
         return sendError(res, ERROR_CODES.INVALID_CREDENTIALS);
       }
 
-      const scraper = buildScraper({ provider, startDate: resolveStartDate(null) });
+      // A connect only proves the credentials work, so it scrapes the shortest
+      // window the library accepts. Fetching 90 days here is time the caller
+      // waits for and data this route throws away.
+      const startDate = resolveStartDate(null, config.CONNECT_START_DAYS_BACK);
+      const scraper = buildScraper({ provider, startDate });
 
       // Providers whose scraper implements the library's two-factor flow get a
       // session; the browser stays alive until /otp completes or the TTL ends.
@@ -109,7 +113,11 @@ function createApp() {
         }
         let triggered;
         try {
-          triggered = await withTimeout(scraper, () => scraper.triggerTwoFactorAuth(credentials.phoneNumber));
+          triggered = await withTimeout(
+            scraper,
+            () => scraper.triggerTwoFactorAuth(credentials.phoneNumber),
+            config.connectTimeoutMs(),
+          );
         } catch (err) {
           await closeQuietly(scraper);
           throw err;
@@ -127,7 +135,7 @@ function createApp() {
 
       let result;
       try {
-        result = await withTimeout(scraper, () => scraper.scrape(credentials));
+        result = await withTimeout(scraper, () => scraper.scrape(credentials), config.connectTimeoutMs());
       } finally {
         await closeQuietly(scraper);
       }
@@ -159,8 +167,10 @@ function createApp() {
         return sendError(res, ERROR_CODES.UNKNOWN, 400);
       }
 
-      const tokenResult = await withTimeout(session.scraper, () =>
-        session.scraper.getLongTermTwoFactorToken(String(otpCode)),
+      const tokenResult = await withTimeout(
+        session.scraper,
+        () => session.scraper.getLongTermTwoFactorToken(String(otpCode)),
+        config.connectTimeoutMs(),
       );
 
       if (!tokenResult || tokenResult.success !== true) {
@@ -182,10 +192,13 @@ function createApp() {
       sessions.remove(sessionId);
 
       // Completing the login means proving the long term token actually works.
-      const verifier = buildScraper({ provider, startDate: resolveStartDate(null) });
+      const verifier = buildScraper({
+        provider,
+        startDate: resolveStartDate(null, config.CONNECT_START_DAYS_BACK),
+      });
       let result;
       try {
-        result = await withTimeout(verifier, () => verifier.scrape(credentials));
+        result = await withTimeout(verifier, () => verifier.scrape(credentials), config.connectTimeoutMs());
       } finally {
         await closeQuietly(verifier);
       }

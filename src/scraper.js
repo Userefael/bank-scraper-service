@@ -9,7 +9,7 @@ const {
   CHROMIUM_ARGS,
   DEFAULT_START_DAYS_BACK,
   NAVIGATION_TIMEOUT_MS,
-  SCRAPE_TIMEOUT_MS,
+  scrapeTimeoutMs,
 } = require('./config');
 const { ApiError, ERROR_CODES } = require('./errors');
 
@@ -71,7 +71,7 @@ async function closeQuietly(scraper) {
  * Runs a scraper call under the 110 second cap. On overrun the browser is
  * closed and a timeout error code is raised.
  */
-async function withTimeout(scraper, run, timeoutMs = SCRAPE_TIMEOUT_MS) {
+async function withTimeout(scraper, run, timeoutMs = scrapeTimeoutMs()) {
   let timer = null;
   const pending = Promise.resolve().then(run);
   try {
@@ -92,9 +92,9 @@ async function withTimeout(scraper, run, timeoutMs = SCRAPE_TIMEOUT_MS) {
   }
 }
 
-/** startDate for a scrape: `since` when usable, otherwise 90 days back. */
-function resolveStartDate(since) {
-  const fallback = new Date(Date.now() - DEFAULT_START_DAYS_BACK * 24 * 60 * 60 * 1000);
+/** startDate for a scrape: `since` when usable, otherwise `daysBack` days back. */
+function resolveStartDate(since, daysBack = DEFAULT_START_DAYS_BACK) {
+  const fallback = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000);
   if (since === undefined || since === null || since === '') return fallback;
   const parsed = since instanceof Date ? since : new Date(since);
   if (Number.isNaN(parsed.getTime())) return fallback;

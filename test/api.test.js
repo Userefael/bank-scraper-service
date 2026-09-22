@@ -108,12 +108,13 @@ test('connect, sync, disconnect round trip', async (t) => {
   assert.equal(connected.body.ok, true);
   assert.match(connected.body.connection_id, /^[0-9a-f-]{36}$/);
 
-  // /connect scrapes 90 days back with installments kept separate.
+  // /connect only validates the login, so it asks for the shortest window;
+  // fetching 90 days here would be time the caller waits for and data we drop.
   const connectOptions = seen[0];
   assert.equal(connectOptions.companyId, 'leumi');
   assert.equal(connectOptions.combineInstallments, false);
   const daysBack = (Date.now() - connectOptions.startDate.getTime()) / 86400000;
-  assert.ok(daysBack > 89.9 && daysBack < 90.1, `startDate was ${daysBack} days back`);
+  assert.ok(daysBack > 0.9 && daysBack < 1.1, `startDate was ${daysBack} days back`);
 
   const connectionId = connected.body.connection_id;
   const synced = await call(server.url, '/sync', {

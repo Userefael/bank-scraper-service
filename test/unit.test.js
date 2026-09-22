@@ -6,7 +6,12 @@ const assert = require('node:assert/strict');
 require('./helpers');
 const { encryptJson, decryptJson, loadKey } = require('../src/crypto');
 const { mapScrapeResult, resolveStartDate, withTimeout } = require('../src/scraper');
-const { DEFAULT_START_DAYS_BACK } = require('../src/config');
+const {
+  CONNECT_START_DAYS_BACK,
+  DEFAULT_START_DAYS_BACK,
+  connectTimeoutMs,
+  scrapeTimeoutMs,
+} = require('../src/config');
 
 test('credentials encrypt and decrypt with AES-256-GCM', () => {
   const credentials = { username: 'user', password: 'secret' };
@@ -48,6 +53,35 @@ test('resolveStartDate falls back to 90 days back', () => {
   // A future date is clamped to now so the library never rejects it.
   const future = resolveStartDate(new Date(Date.now() + 86400000).toISOString());
   assert.ok(future.getTime() <= Date.now() + 1000);
+});
+
+test('resolveStartDate honours a shorter window', () => {
+  const days = (Date.now() - resolveStartDate(null, CONNECT_START_DAYS_BACK).getTime()) / 86400000;
+  assert.ok(Math.abs(days - CONNECT_START_DAYS_BACK) < 0.1, `got ${days} days`);
+});
+
+test('the scrape caps fall back to their defaults and follow the environment', (t) => {
+  const saved = { scrape: process.env.SCRAPE_TIMEOUT_MS, connect: process.env.CONNECT_TIMEOUT_MS };
+  t.after(() => {
+    if (saved.scrape === undefined) delete process.env.SCRAPE_TIMEOUT_MS;
+    else process.env.SCRAPE_TIMEOUT_MS = saved.scrape;
+    if (saved.connect === undefined) delete process.env.CONNECT_TIMEOUT_MS;
+    else process.env.CONNECT_TIMEOUT_MS = saved.connect;
+  });
+
+  delete process.env.SCRAPE_TIMEOUT_MS;
+  delete process.env.CONNECT_TIMEOUT_MS;
+  assert.equal(scrapeTimeoutMs(), 110000);
+  assert.equal(connectTimeoutMs(), 90000);
+
+  process.env.SCRAPE_TIMEOUT_MS = '45000';
+  process.env.CONNECT_TIMEOUT_MS = '30000';
+  assert.equal(scrapeTimeoutMs(), 45000);
+  assert.equal(connectTimeoutMs(), 30000);
+
+  // A nonsense value must not disable the cap.
+  process.env.CONNECT_TIMEOUT_MS = 'soon';
+  assert.equal(connectTimeoutMs(), 90000);
 });
 
 test('mapScrapeResult sums balances and keeps per transaction currency', () => {

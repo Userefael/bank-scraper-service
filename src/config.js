@@ -19,10 +19,32 @@ const PROVIDERS = [
   'behatsdaa',
 ];
 
-const SCRAPE_TIMEOUT_MS = 110 * 1000;
+function msFromEnv(name, fallback) {
+  const value = Number(process.env[name]);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+/**
+ * Caps on a single scrape. Both are env tunable because the limit that matters
+ * in production is the gateway's: a cap above it turns into an opaque 504 for
+ * the client instead of an { ok: false, error_code } body from this service.
+ */
+function scrapeTimeoutMs() {
+  return msFromEnv('SCRAPE_TIMEOUT_MS', 110 * 1000);
+}
+
+function connectTimeoutMs() {
+  return msFromEnv('CONNECT_TIMEOUT_MS', 90 * 1000);
+}
+
 const SESSION_TTL_MS = 3 * 60 * 1000;
 const MAX_OTP_ATTEMPTS = 3;
 const DEFAULT_START_DAYS_BACK = 90;
+/**
+ * /connect only has to prove the credentials work; the transactions it would
+ * fetch are discarded, and every extra month is time the caller waits for.
+ */
+const CONNECT_START_DAYS_BACK = 1;
 const NAVIGATION_TIMEOUT_MS = 60 * 1000;
 
 const CHROMIUM_ARGS = ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'];
@@ -45,7 +67,9 @@ function isProvider(value) {
 
 module.exports = {
   PROVIDERS,
-  SCRAPE_TIMEOUT_MS,
+  scrapeTimeoutMs,
+  connectTimeoutMs,
+  CONNECT_START_DAYS_BACK,
   SESSION_TTL_MS,
   MAX_OTP_ATTEMPTS,
   DEFAULT_START_DAYS_BACK,
