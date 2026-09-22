@@ -153,6 +153,10 @@ async function beginInteractiveLogin({ provider, credentials, connectionId, star
         const verdict = await scraper.completeOtp(code, possibleResults);
         if (verdict === LOGIN_OUTCOMES.SUCCESS) return connected();
         if (verdict === LOGIN_OUTCOMES.INVALID_PASSWORD) {
+          // A rejected code and a code the dialog never received look the same
+          // from here, so the dialog's own shape goes to the log: whether it is
+          // still up, and what it is offering now.
+          logger.diagnostic('otp_page_after_submit', await scraper.describePage().catch(() => null));
           // The session stays open so the caller can try another code.
           return { status: 'otp_rejected', errorCode: ERROR_CODES.INVALID_CREDENTIALS };
         }

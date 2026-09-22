@@ -5,6 +5,7 @@ const { clickButton, waitUntilElementFound } = require('israeli-bank-scrapers/li
 const { getCurrentUrl } = require('israeli-bank-scrapers/lib/helpers/navigation');
 
 const { loginWaitMs } = require('../config');
+const logger = require('../logger');
 
 /** Outcomes of a login phase, mapped to error codes by the caller. */
 const LOGIN_OUTCOMES = {
@@ -180,30 +181,78 @@ class HapoalimOtpScraper extends HapoalimScraper {
     return chosen ? { ...chosen, textMatches: survey.textMatches } : null;
   }
 
-  /** Types the code, one character per box when the bank splits it up. */
+  /** Types the code the way a person does, and checks that it landed. */
   async completeOtp(code, possibleResults) {
     const target = this.otpTarget || (await this.locateOtpTarget());
     if (!target) return LOGIN_OUTCOMES.UNKNOWN;
 
     const digits = String(code).replace(/\D/g, '');
     const { frame, mode, indexes } = target;
+    const selectorFor = (position) => `[${FIELD_ATTRIBUTE}="${indexes[position]}"]`;
 
     if (mode === 'multi') {
-      for (let position = 0; position < indexes.length && position < digits.length; position += 1) {
-        const selector = `[${FIELD_ATTRIBUTE}="${indexes[position]}"]`;
-        await frame.focus(selector);
-        await frame.type(selector, digits[position]);
+      // The bank's own script moves focus from box to box as digits arrive, so
+      // the code is typed as one run of keystrokes into the first box and the
+      // page distributes it. Filling each box by hand instead leaves the page's
+      // model empty, which is what a framework-driven dialog actually reads.
+      await frame.focus(selectorFor(0));
+      await frame.type(selectorFor(0), digits, { delay: 60 });
+
+      // Focus may not travel on its own, and then everything landed in box one.
+      if ((await this.countFilled(frame, indexes)) < Math.min(digits.length, indexes.length)) {
+        await this.clearBoxes(frame, indexes);
+        for (let position = 0; position < indexes.length && position < digits.length; position += 1) {
+          await frame.focus(selectorFor(position));
+          await frame.type(selectorFor(position), digits[position], { delay: 60 });
+        }
       }
     } else {
-      const selector = `[${FIELD_ATTRIBUTE}="${indexes[0]}"]`;
-      await frame.focus(selector);
-      await frame.type(selector, digits);
+      await frame.focus(selectorFor(0));
+      await frame.type(selectorFor(0), digits, { delay: 60 });
     }
 
-    if (!(await this.submitOtpForm(frame))) {
-      await this.page.keyboard.press('Enter');
-    }
+    const filled = await this.countFilled(frame, indexes);
+    logger.info('otp_typed', { event: `filled_${filled}_of_${indexes.length}` });
+
+    // A dialog that enables its button on the last digit needs a moment to.
+    await delay(POLL_INTERVAL_MS);
+    const submitted = await this.submitOtpForm(frame);
+    if (!submitted) await this.page.keyboard.press('Enter');
+    logger.info('otp_submitted', { reason: submitted ? 'button' : 'enter_key' });
+
     return this.waitForOtpVerdict(possibleResults);
+  }
+
+  /** How many code boxes hold anything. Counts only: never the characters. */
+  async countFilled(frame, indexes) {
+    return frame
+      .evaluate(
+        (fieldAttribute, positions) =>
+          positions.filter((position) => {
+            const element = document.querySelector(`[${fieldAttribute}="${position}"]`);
+            return !!element && String(element.value || '').length > 0;
+          }).length,
+        FIELD_ATTRIBUTE,
+        indexes,
+      )
+      .catch(() => 0);
+  }
+
+  async clearBoxes(frame, indexes) {
+    await frame
+      .evaluate(
+        (fieldAttribute, positions) => {
+          for (const position of positions) {
+            const element = document.querySelector(`[${fieldAttribute}="${position}"]`);
+            if (!element) continue;
+            element.value = '';
+            element.dispatchEvent(new Event('input', { bubbles: true }));
+          }
+        },
+        FIELD_ATTRIBUTE,
+        indexes,
+      )
+      .catch(() => {});
   }
 
   /** Clicks the dialog's own button, found by its label rather than its class. */
