@@ -16,14 +16,24 @@ const ALLOWED_FIELDS = new Set([
   'transactions',
   'accounts',
   'event',
+  'reason',
 ]);
+
+/**
+ * Error messages from the library and puppeteer name URLs, selectors and HTTP
+ * status codes, which are what makes a failure diagnosable. Digit runs are
+ * masked anyway so that no code, card or account number can ride along.
+ */
+function scrubReason(value) {
+  return String(value).replace(/\d{4,}/g, '***').slice(0, 200);
+}
 
 function pick(fields) {
   const out = {};
   for (const [key, value] of Object.entries(fields || {})) {
     if (!ALLOWED_FIELDS.has(key)) continue;
     if (value === undefined || value === null) continue;
-    out[key] = value;
+    out[key] = key === 'reason' ? scrubReason(value) : value;
   }
   return out;
 }
@@ -34,12 +44,13 @@ function emit(level, message, fields) {
 }
 
 /**
- * Page-shape diagnostics for a login that landed somewhere unexpected. Off
- * unless DEBUG_LOGIN_PAGE is set, and its payload is built from element names,
- * types and labels only: field values never reach it.
+ * Page-shape diagnostics for a login that landed somewhere unexpected. The
+ * payload is built from element names, types and labels only, never values,
+ * which is why it can be logged without a flag: a login nobody can diagnose
+ * is worse than a log line nobody reads.
  */
 function diagnostic(message, payload) {
-  if (process.env.DEBUG_LOGIN_PAGE !== 'true') return;
+  if (!payload) return;
   process.stdout.write(`${JSON.stringify({ level: 'debug', msg: message, page: payload })}\n`);
 }
 

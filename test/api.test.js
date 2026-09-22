@@ -490,3 +490,28 @@ test('the browser profile lives and dies with the connection', async (t) => {
   await call(server.url, '/disconnect', { connection_id: connected.body.connection_id });
   assert.equal(fs.existsSync(profile), false, 'profile removed with the connection');
 });
+
+test('a login that throws still closes its browser', async (t) => {
+  const launched = fakeBrowser();
+  setInteractiveScraperFactory(() => ({
+    getLoginOptions: () => ({ possibleResults: { SUCCESS: ['https://bank/home'] } }),
+    beginLogin: async () => {
+      throw new Error('Failed to navigate to url https://login.bankhapoalim.co.il, status code: 403');
+    },
+    describePage: async () => null,
+    finish: async () => {},
+  }));
+  const server = await startServer();
+  t.after(() => server.close());
+
+  const res = await call(server.url, '/connect', {
+    provider: 'hapoalim',
+    credentials: { userCode: 'user', password: 'secret' },
+  });
+
+  // A blocked navigation is the bank refusing us, not an unknown failure.
+  assert.equal(res.status, 503);
+  assert.equal(res.body.error_code, 'service_unavailable');
+  assert.equal(launched.length, 1);
+  assert.equal(launched[0].closed, true, 'the browser must not outlive the request');
+});

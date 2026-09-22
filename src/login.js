@@ -75,7 +75,15 @@ async function beginInteractiveLogin({ provider, credentials, connectionId, star
     return result;
   };
 
-  const outcome = await scraper.beginLogin(credentials);
+  let outcome;
+  try {
+    outcome = await scraper.beginLogin(credentials);
+  } catch (err) {
+    // Whatever the bank did, the browser is ours to close.
+    logger.diagnostic('login_page_unrecognised', await scraper.describePage().catch(() => null));
+    await finish(false);
+    throw err;
+  }
 
   if (outcome === LOGIN_OUTCOMES.SUCCESS) {
     return { status: 'connected', result: await collect() };
@@ -108,6 +116,7 @@ async function beginInteractiveLogin({ provider, credentials, connectionId, star
     logger.diagnostic('login_page_unrecognised', await scraper.describePage().catch(() => null));
   }
   await finish(false);
+  logger.warn('login_outcome', { provider, event: outcome });
   return { status: 'failed', errorCode: OUTCOME_ERROR_CODES[outcome] || ERROR_CODES.UNKNOWN };
 }
 

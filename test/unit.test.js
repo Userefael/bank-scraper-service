@@ -130,3 +130,14 @@ test('withTimeout closes the browser and raises timeout', async () => {
   );
   assert.equal(closed, true);
 });
+
+test('logged reasons keep the diagnosis and drop the digits', () => {
+  const { ERROR_CODES, errorCodeFromException } = require('../src/errors');
+
+  assert.equal(
+    errorCodeFromException(new Error('Failed to navigate to url https://login.bankhapoalim.co.il, status code: 403')),
+    ERROR_CODES.SERVICE_UNAVAILABLE,
+  );
+  assert.equal(errorCodeFromException(new Error('waiting for selector timed out')), ERROR_CODES.TIMEOUT);
+  assert.equal(errorCodeFromException(new Error('something else entirely')), ERROR_CODES.UNKNOWN);
+});

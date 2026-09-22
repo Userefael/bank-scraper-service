@@ -49,7 +49,7 @@ function handler(route, fn) {
     } catch (err) {
       const code = errorCodeFromException(err);
       const status = err instanceof ApiError ? err.status : undefined;
-      logger.error('request_failed', { route, error_code: code });
+      logger.error('request_failed', { route, error_code: code, reason: err && err.message });
       if (!res.headersSent) sendError(res, code, status);
     }
   };
@@ -115,6 +115,7 @@ function createApp() {
           config.connectTimeoutMs(),
         );
       } catch (err) {
+        await closeQuietly(handles);
         await browser.removeProfile(connectionId);
         throw err;
       }

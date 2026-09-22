@@ -60,7 +60,7 @@ function errorCodeFromException(err) {
   const message = String((err && err.message) || '');
   if (/timeout|timed out/i.test(message)) return ERROR_CODES.TIMEOUT;
   if (
-    /Failed to launch|executable doesn't exist|ENOENT|spawn|Target closed|Protocol error|net::ERR|socket hang up|EAI_AGAIN|ECONNREFUSED|ENOTFOUND/i.test(
+    /Failed to launch|executable doesn't exist|ENOENT|spawn|Target closed|Protocol error|net::ERR|socket hang up|EAI_AGAIN|ECONNREFUSED|ENOTFOUND|Failed to navigate|status code/i.test(
       message,
     )
   ) {
