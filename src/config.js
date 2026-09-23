@@ -54,6 +54,16 @@ const NAVIGATION_TIMEOUT_MS = 60 * 1000;
  * scraper. Setting it to `hapoalim` turns on the flow in
  * src/scrapers/hapoalim-otp.js, which is the only one implemented.
  */
+/**
+ * Whether to press the code dialog's own "send a new code" button when the
+ * dialog opens. The bank has been seen opening it without sending anything,
+ * and then there is no code to wait for; pressing it also ties the code the
+ * customer receives to this session and not to an earlier attempt.
+ */
+function forceOtpResend() {
+  return process.env.OTP_FORCE_RESEND !== 'false';
+}
+
 function interactiveOtpProviders() {
   return (process.env.INTERACTIVE_OTP_PROVIDERS || '')
     .split(',')
@@ -113,6 +123,7 @@ module.exports = {
   interactiveOtpProviders,
   loginWaitMs,
   fastAnswerMs,
+  forceOtpResend,
   CHROMIUM_ARGS,
   dataDir,
   connectionsFile,

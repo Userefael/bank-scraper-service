@@ -36,8 +36,12 @@ const SUBMIT_TEXT_PATTERNS = [/^(המשך|אישור|continue|submit)$/i, /^של
 /** Buttons only the code dialog has, used to confirm it is really on screen. */
 const DIALOG_BUTTON_PATTERN = /שלחו קוד|קוד קולי/;
 
+/** The dialog's own offer to send the code, for a dialog that opened without. */
+const RESEND_TEXT_PATTERN = /שלחו קוד חדש/;
+
 const FIELD_ATTRIBUTE = 'data-scraper-otp-field';
 const SUBMIT_ATTRIBUTE = 'data-scraper-otp-submit';
+const RESEND_ATTRIBUTE = 'data-scraper-otp-resend';
 const POLL_INTERVAL_MS = 500;
 
 function delay(ms) {
@@ -203,6 +207,54 @@ class HapoalimOtpScraper extends HapoalimScraper {
     return chosen
       ? { ...chosen, textMatches: survey.textMatches, dialogButtons: survey.dialogButtons }
       : null;
+  }
+
+  /**
+   * Presses the dialog's "send a new code" button. A dialog that opened
+   * without a message having gone out is a dialog with no code to type, and
+   * this is the only thing on it that starts one. It also guarantees that the
+   * code the customer ends up holding belongs to this session rather than to
+   * an earlier attempt.
+   */
+  async requestNewCode() {
+    const frame = (this.otpTarget && this.otpTarget.frame) || this.page;
+    const tagged = await frame
+      .evaluate(
+        (resendAttribute, textPattern) => {
+          const pattern = new RegExp(textPattern);
+          const onScreen = (element) => {
+            const rect = element.getBoundingClientRect();
+            if (rect.width <= 0 || rect.height <= 0) return false;
+            for (let node = element; node && node.nodeType === 1; node = node.parentElement) {
+              const style = window.getComputedStyle(node);
+              if (style.display === 'none' || style.visibility === 'hidden') return false;
+              if (Number(style.opacity) === 0) return false;
+            }
+            return true;
+          };
+          const match = [...document.querySelectorAll('button, a[role="button"]')].find(
+            (element) => pattern.test((element.innerText || '').trim()) && onScreen(element),
+          );
+          if (!match || match.disabled) return false;
+          match.setAttribute(resendAttribute, 'true');
+          return true;
+        },
+        RESEND_ATTRIBUTE,
+        RESEND_TEXT_PATTERN.source,
+      )
+      .catch(() => false);
+
+    if (!tagged) return false;
+    try {
+      await clickButton(frame, `[${RESEND_ATTRIBUTE}="true"]`);
+    } catch {
+      return false;
+    }
+
+    // The dialog is redrawn around the new code, so the boxes are tagged again.
+    await delay(2 * POLL_INTERVAL_MS);
+    await this.locateOtpTarget();
+    return true;
   }
 
   /** Types the code the way a person does, and checks that it landed. */

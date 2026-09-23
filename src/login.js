@@ -121,6 +121,13 @@ async function beginInteractiveLogin({ provider, credentials, connectionId, star
   // this service is willing to hold the request open. Both answer now with a
   // session: the bank has sent the code by then, or is about to, and the
   // customer can be typing it while this finishes.
+  // The bank has been seen opening the dialog without sending a message, and
+  // a dialog with no code behind it is a dead end for the customer.
+  if (scraper.otpTarget && typeof scraper.requestNewCode === 'function' && config.forceOtpResend()) {
+    const asked = await scraper.requestNewCode().catch(() => false);
+    logger.info('otp_resend', { provider, event: asked ? 'requested' : 'button_unavailable' });
+  }
+
   const target = scraper.otpTarget;
   logger.info('otp_session_opened', {
     provider,
