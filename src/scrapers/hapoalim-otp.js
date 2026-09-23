@@ -424,6 +424,25 @@ class HapoalimOtpScraper extends HapoalimScraper {
     return (await this.locateOtpTarget()) ? LOGIN_OUTCOMES.INVALID_PASSWORD : LOGIN_OUTCOMES.UNKNOWN;
   }
 
+  /**
+   * Where the login actually stands when a code dialog is found, which is the
+   * one thing the outcome alone cannot say. A dialog on the login page is a
+   * challenge in progress; the same dialog over a loaded portal would mean the
+   * login is already through and the challenge is being waited on for nothing.
+   * `bnhpApp` is the portal object the library itself waits for after login.
+   */
+  async loginState() {
+    const url = await getCurrentUrl(this.page, true);
+    const title = await this.page.title().catch(() => '');
+    const portal = await this.page
+      .evaluate(() => ({
+        portalApp: typeof window.bnhpApp !== 'undefined' && window.bnhpApp !== null,
+        restContext: !!(window.bnhpApp && window.bnhpApp.restContext),
+      }))
+      .catch(() => ({ portalApp: false, restContext: false }));
+    return { url, title, ...portal };
+  }
+
   /** Uses the library's own fetching once the login is through. */
   async fetchAfterLogin() {
     return this.fetchData();

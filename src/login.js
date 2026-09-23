@@ -128,6 +128,10 @@ async function beginInteractiveLogin({ provider, credentials, connectionId, star
     logger.info('otp_resend', { provider, event: asked ? 'requested' : 'button_unavailable' });
   }
 
+  if (scraper.otpTarget && typeof scraper.loginState === 'function') {
+    logger.diagnostic('otp_session_state', await scraper.loginState().catch(() => null));
+  }
+
   const target = scraper.otpTarget;
   logger.info('otp_session_opened', {
     provider,
