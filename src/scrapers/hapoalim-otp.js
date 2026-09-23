@@ -127,7 +127,16 @@ class HapoalimOtpScraper extends HapoalimScraper {
       if (urlMatches(current, possibleResults.SUCCESS)) return LOGIN_OUTCOMES.SUCCESS;
       if (urlMatches(current, possibleResults.INVALID_PASSWORD)) return LOGIN_OUTCOMES.INVALID_PASSWORD;
       if (urlMatches(current, possibleResults.CHANGE_PASSWORD)) return LOGIN_OUTCOMES.CHANGE_PASSWORD;
-      if (await this.locateOtpTarget()) return LOGIN_OUTCOMES.OTP_REQUIRED;
+      if (await this.locateOtpTarget()) {
+        // The bank leaves the code dialog up over a portal that has already
+        // loaded, and the library's success check is three fixed addresses
+        // that this page is not one of. So a dialog is not proof of a
+        // challenge that still matters: if the data can be fetched, the login
+        // is through and there is nothing to answer. Asking for it is the only
+        // thing that settles it, and it is what /sync would do anyway.
+        if (await this.loggedInAlready()) return LOGIN_OUTCOMES.SUCCESS;
+        return LOGIN_OUTCOMES.OTP_REQUIRED;
+      }
       await delay(POLL_INTERVAL_MS);
     }
     return LOGIN_OUTCOMES.UNKNOWN;
@@ -422,6 +431,29 @@ class HapoalimOtpScraper extends HapoalimScraper {
 
     // The dialog still being up means the bank did not accept what we typed.
     return (await this.locateOtpTarget()) ? LOGIN_OUTCOMES.INVALID_PASSWORD : LOGIN_OUTCOMES.UNKNOWN;
+  }
+
+  /**
+   * Whether the login is already through, proven rather than guessed: the
+   * portal object the library waits for after login has to be there with its
+   * rest context, and the bank has to actually answer for the accounts. A
+   * login page that merely runs the same app answers neither.
+   */
+  async loggedInAlready() {
+    const ready = await this.page
+      .evaluate(() => !!(window.bnhpApp && window.bnhpApp.restContext))
+      .catch(() => false);
+    if (!ready) return false;
+
+    try {
+      const data = await this.fetchData();
+      const accounts = (data && data.accounts) || [];
+      if (!accounts.length) return false;
+      logger.info('login_outcome', { event: 'portal_already_open', accounts: accounts.length });
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   /**
