@@ -33,6 +33,9 @@ const OTP_TEXT_PATTERN = /קוד האימות|קוד אימות|כניסה חד�
  */
 const SUBMIT_TEXT_PATTERNS = [/^(המשך|אישור|continue|submit)$/i, /^שלח$/i, /^כניסה$/i];
 
+/** Buttons only the code dialog has, used to confirm it is really on screen. */
+const DIALOG_BUTTON_PATTERN = /שלחו קוד|קוד קולי/;
+
 const FIELD_ATTRIBUTE = 'data-scraper-otp-field';
 const SUBMIT_ATTRIBUTE = 'data-scraper-otp-submit';
 const POLL_INTERVAL_MS = 500;
@@ -145,11 +148,25 @@ class HapoalimOtpScraper extends HapoalimScraper {
 
   async scanFrame(frame) {
     const survey = await frame.evaluate(
-      (fieldAttribute, textPattern) => {
+      (fieldAttribute, textPattern, dialogPattern) => {
+        // Whether an element is really on screen, which is not what its own
+        // computed style says: a modal mid-animation, or one the page keeps in
+        // the DOM for later, is hidden by an ancestor. display and opacity do
+        // not inherit, so the ancestors have to be walked. Without this a
+        // dialog nobody can see looks exactly like one the bank just opened.
+        const isRendered = (element) => {
+          const rect = element.getBoundingClientRect();
+          if (rect.width <= 0 || rect.height <= 0) return false;
+          for (let node = element; node && node.nodeType === 1; node = node.parentElement) {
+            const style = window.getComputedStyle(node);
+            if (style.display === 'none' || style.visibility === 'hidden') return false;
+            if (Number(style.opacity) === 0) return false;
+          }
+          return true;
+        };
+
         const inputs = [...document.querySelectorAll('input')];
         const candidates = inputs.map((element, index) => {
-          const style = window.getComputedStyle(element);
-          const rect = element.getBoundingClientRect();
           element.setAttribute(fieldAttribute, String(index));
           return {
             index,
@@ -160,25 +177,32 @@ class HapoalimOtpScraper extends HapoalimScraper {
             label: element.getAttribute('aria-label') || '',
             maxLength: element.maxLength > 0 ? element.maxLength : null,
             disabled: element.disabled,
-            visible:
-              style.display !== 'none' &&
-              style.visibility !== 'hidden' &&
-              style.opacity !== '0' &&
-              rect.width > 0 &&
-              rect.height > 0,
+            visible: isRendered(element),
           };
         });
+
+        // The dialog's own offers to resend the code, counted only when they
+        // are on screen: a second opinion on whether it is really open.
+        const pattern = new RegExp(dialogPattern);
+        const dialogButtons = [...document.querySelectorAll('button, a[role="button"]')].filter(
+          (element) => pattern.test((element.innerText || '').trim()) && isRendered(element),
+        ).length;
+
         return {
           candidates,
+          dialogButtons,
           textMatches: new RegExp(textPattern).test(document.body.innerText || ''),
         };
       },
       FIELD_ATTRIBUTE,
       OTP_TEXT_PATTERN.source,
+      DIALOG_BUTTON_PATTERN.source,
     );
 
     const chosen = chooseOtpFields(survey.candidates, { textMatches: survey.textMatches });
-    return chosen ? { ...chosen, textMatches: survey.textMatches } : null;
+    return chosen
+      ? { ...chosen, textMatches: survey.textMatches, dialogButtons: survey.dialogButtons }
+      : null;
   }
 
   /** Types the code the way a person does, and checks that it landed. */

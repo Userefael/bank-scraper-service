@@ -121,9 +121,13 @@ async function beginInteractiveLogin({ provider, credentials, connectionId, star
   // this service is willing to hold the request open. Both answer now with a
   // session: the bank has sent the code by then, or is about to, and the
   // customer can be typing it while this finishes.
+  const target = scraper.otpTarget;
   logger.info('otp_session_opened', {
     provider,
     event: raced === PENDING ? 'login_pending' : 'code_page_reached',
+    // A dialog with none of its own buttons on screen is one nobody can see,
+    // and a code screen the customer gets no message for.
+    reason: target ? `dialog_buttons_${target.dialogButtons ?? 0}` : 'no_dialog_yet',
   });
 
   // A session handed out on a pending login is a guess, and the guess is only
